@@ -1,4 +1,4 @@
-name: hf-bridge-release-probe
+name: hf-model-bridge
 
 on:
   push:
@@ -7,28 +7,87 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
 
 jobs:
-  probe:
+  bridge:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 40
+    env:
+      MODEL_URL: https://huggingface.co/empero-ai/Qwen3.8-4B-Distill-GGUF/resolve/main/Qwen3.8-4B-Q4_K_M.gguf?download=true
+      MODEL_FILE: Qwen3.8-4B-Q4_K_M.gguf
+      CHUNK_INDEX: '0'
+      CHUNK_MIB: '450'
     steps:
-      - name: Make 1 MiB probe
-        shell: bash
-        run: |
-          set -euo pipefail
-          head -c 1048576 /dev/urandom > release-probe.bin
-          sha256sum release-probe.bin | tee release-probe.sha256
-      - name: Publish temporary release asset
+      - name: Clean bridge leftovers
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           gh release delete hf-bridge-temp --repo "$GITHUB_REPOSITORY" --cleanup-tag -y || true
-          gh release create hf-bridge-temp \
-            --repo "$GITHUB_REPOSITORY" \
-            release-probe.bin release-probe.sha256 \
-            --title 'Temporary HF bridge' \
-            --notes 'Temporary transfer probe; safe to delete.'
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name == "bridge-probe" or (.name | startswith("qwen38-q4km-part"))) | .id' \
+            | while read -r id; do
+                [ -n "$id" ] && gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" >/dev/null
+              done
+
+      - name: Restore model cache
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MODEL_FILE }}
+          key: qwen38-4b-q4km-v1
+
+      - name: Download model from Hugging Face
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 8 --retry-delay 3 --retry-all-errors \
+            --connect-timeout 30 \
+            -o "$MODEL_FILE" "$MODEL_URL"
+
+      - name: Verify and cut selected chunk
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$MODEL_FILE"
+          size=$(stat -c '%s' "$MODEL_FILE")
+          sha=$(sha256sum "$MODEL_FILE" | awk '{print $1}')
+          chunk_bytes=$((CHUNK_MIB * 1024 * 1024))
+          total=$(((size + chunk_bytes - 1) / chunk_bytes))
+          if [ "$CHUNK_INDEX" -ge "$total" ]; then
+            echo "chunk index $CHUNK_INDEX out of range; total=$total" >&2
+            exit 2
+          fi
+          printf -v idx '%02d' "$CHUNK_INDEX"
+          part="$MODEL_FILE.part$idx"
+          dd if="$MODEL_FILE" of="$part" bs=1M skip=$((CHUNK_INDEX * CHUNK_MIB)) count="$CHUNK_MIB" status=progress
+          part_size=$(stat -c '%s' "$part")
+          part_sha=$(sha256sum "$part" | awk '{print $1}')
+          cat > bridge-manifest.txt <<EOF
+          MODEL_FILE=$MODEL_FILE
+          MODEL_SIZE=$size
+          MODEL_SHA256=$sha
+          CHUNK_MIB=$CHUNK_MIB
+          CHUNK_INDEX=$CHUNK_INDEX
+          CHUNK_TOTAL=$total
+          PART_FILE=$part
+          PART_SIZE=$part_size
+          PART_SHA256=$part_sha
+          EOF
+          cat bridge-manifest.txt
+          echo "PART_FILE=$part" >> "$GITHUB_ENV"
+          echo "PART_IDX=$idx" >> "$GITHUB_ENV"
+
+      - name: Upload selected chunk
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-q4km-part${{ env.PART_IDX }}
+          path: |
+            ${{ env.PART_FILE }}
+            bridge-manifest.txt
+          compression-level: 0
+          retention-days: 1
