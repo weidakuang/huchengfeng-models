@@ -8,7 +8,7 @@ on:
 
 permissions:
   actions: write
-  contents: write
+  contents: read
 
 jobs:
   bridge:
@@ -17,18 +17,15 @@ jobs:
     env:
       MODEL_URL: https://huggingface.co/empero-ai/Qwen3.8-4B-Distill-GGUF/resolve/main/Qwen3.8-4B-Q4_K_M.gguf?download=true
       MODEL_FILE: Qwen3.8-4B-Q4_K_M.gguf
-      CHUNK_INDEX: '2'
-      CHUNK_MIB: '450'
     steps:
-      - name: Clean bridge leftovers
+      - name: Clean old bridge artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release delete hf-bridge-temp --repo "$GITHUB_REPOSITORY" --cleanup-tag -y || true
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.name == "bridge-probe" or (.name | startswith("qwen38-q4km-part"))) | .id' \
+            --jq '.artifacts[] | select(.name | startswith("qwen38-q4km-part")) | .id' \
             | while read -r id; do
                 [ -n "$id" ] && gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" >/dev/null
               done
@@ -46,48 +43,45 @@ jobs:
         run: |
           set -euo pipefail
           curl -L --fail --retry 8 --retry-delay 3 --retry-all-errors \
-            --connect-timeout 30 \
-            -o "$MODEL_FILE" "$MODEL_URL"
+            --connect-timeout 30 -o "$MODEL_FILE" "$MODEL_URL"
 
-      - name: Verify and cut selected chunk
+      - name: Verify and cut chunks 3-5
         shell: bash
         run: |
           set -euo pipefail
           test -s "$MODEL_FILE"
-          size=$(stat -c '%s' "$MODEL_FILE")
-          sha=$(sha256sum "$MODEL_FILE" | awk '{print $1}')
-          chunk_bytes=$((CHUNK_MIB * 1024 * 1024))
-          total=$(((size + chunk_bytes - 1) / chunk_bytes))
-          if [ "$CHUNK_INDEX" -ge "$total" ]; then
-            echo "chunk index $CHUNK_INDEX out of range; total=$total" >&2
-            exit 2
-          fi
-          printf -v idx '%02d' "$CHUNK_INDEX"
-          part="$MODEL_FILE.part$idx"
-          dd if="$MODEL_FILE" of="$part" bs=1M skip=$((CHUNK_INDEX * CHUNK_MIB)) count="$CHUNK_MIB" status=progress
-          part_size=$(stat -c '%s' "$part")
-          part_sha=$(sha256sum "$part" | awk '{print $1}')
-          cat > bridge-manifest.txt <<EOF
-          MODEL_FILE=$MODEL_FILE
-          MODEL_SIZE=$size
-          MODEL_SHA256=$sha
-          CHUNK_MIB=$CHUNK_MIB
-          CHUNK_INDEX=$CHUNK_INDEX
-          CHUNK_TOTAL=$total
-          PART_FILE=$part
-          PART_SIZE=$part_size
-          PART_SHA256=$part_sha
-          EOF
-          cat bridge-manifest.txt
-          echo "PART_FILE=$part" >> "$GITHUB_ENV"
-          echo "PART_IDX=$idx" >> "$GITHUB_ENV"
+          sha256sum "$MODEL_FILE" | tee model.sha256
+          stat -c 'MODEL_SIZE=%s' "$MODEL_FILE" | tee model.size
+          dd if="$MODEL_FILE" of="$MODEL_FILE.part03" bs=1M skip=1350 count=450 status=progress
+          dd if="$MODEL_FILE" of="$MODEL_FILE.part04" bs=1M skip=1800 count=450 status=progress
+          dd if="$MODEL_FILE" of="$MODEL_FILE.part05" bs=1M skip=2250 count=450 status=progress
+          sha256sum "$MODEL_FILE".part03 "$MODEL_FILE".part04 "$MODEL_FILE".part05 | tee parts.sha256
+          ls -lh "$MODEL_FILE".part03 "$MODEL_FILE".part04 "$MODEL_FILE".part05
 
-      - name: Upload selected chunk
+      - name: Upload part 03
         uses: actions/upload-artifact@v4
         with:
-          name: qwen38-q4km-part${{ env.PART_IDX }}
+          name: qwen38-q4km-part03
           path: |
-            ${{ env.PART_FILE }}
-            bridge-manifest.txt
+            Qwen3.8-4B-Q4_K_M.gguf.part03
+            model.sha256
+            model.size
+            parts.sha256
+          compression-level: 0
+          retention-days: 1
+
+      - name: Upload part 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-q4km-part04
+          path: Qwen3.8-4B-Q4_K_M.gguf.part04
+          compression-level: 0
+          retention-days: 1
+
+      - name: Upload part 05
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-q4km-part05
+          path: Qwen3.8-4B-Q4_K_M.gguf.part05
           compression-level: 0
           retention-days: 1
