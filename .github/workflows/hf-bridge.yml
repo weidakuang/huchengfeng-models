@@ -26,8 +26,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release delete hf-bridge-temp --cleanup-tag -y || true
+          gh release delete hf-bridge-temp --repo "$GITHUB_REPOSITORY" --cleanup-tag -y || true
           gh release create hf-bridge-temp \
+            --repo "$GITHUB_REPOSITORY" \
             release-probe.bin release-probe.sha256 \
             --title 'Temporary HF bridge' \
             --notes 'Temporary transfer probe; safe to delete.'
