@@ -1,0 +1,71 @@
+name: hf-qwen38-infer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/hf-infer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  infer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MODEL_FILE: Qwen3.8-4B-Q4_K_M.gguf
+      MODEL_URL: https://huggingface.co/empero-ai/Qwen3.8-4B-Distill-GGUF/resolve/main/Qwen3.8-4B-Q4_K_M.gguf?download=true
+    steps:
+      - name: Restore model cache
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MODEL_FILE }}
+          key: qwen38-4b-q4km-v1
+
+      - name: Download model if cache missed
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 8 --retry-all-errors --connect-timeout 30 -o "$MODEL_FILE" "$MODEL_URL"
+
+      - name: Verify model
+        shell: bash
+        run: |
+          set -euo pipefail
+          stat -c '%s bytes' "$MODEL_FILE"
+          sha256sum "$MODEL_FILE"
+
+      - name: Download llama.cpp b10094
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-all-errors -o llama.tar.gz 'https://github.com/ggml-org/llama.cpp/releases/download/b10094/llama-b10094-bin-ubuntu-x64.tar.gz'
+          mkdir llama
+          tar -xzf llama.tar.gz -C llama
+          CLI=$(find llama -type f -name llama-cli | head -n1)
+          test -n "$CLI"
+          chmod +x "$CLI"
+          echo "LLAMA_CLI=$CLI" >> "$GITHUB_ENV"
+          echo "LLAMA_BIN_DIR=$(dirname "$CLI")" >> "$GITHUB_ENV"
+          export LD_LIBRARY_PATH="$(dirname "$CLI"):${LD_LIBRARY_PATH:-}"
+          "$CLI" --version
+
+      - name: Run Qwen3.8-4B
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$LLAMA_BIN_DIR:${LD_LIBRARY_PATH:-}"
+          echo '===== QWEN3.8 LOCAL INFERENCE START ====='
+          "$LLAMA_CLI" -m "$MODEL_FILE" -p 'The capital of France is' -n 32 -c 1024 -t 4 --temp 0 --seed 42 --no-display-prompt 2>&1 | tee inference.txt
+          echo '===== QWEN3.8 LOCAL INFERENCE END ====='
+
+      - name: Upload tiny inference result
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-inference-result
+          path: inference.txt
+          retention-days: 1
