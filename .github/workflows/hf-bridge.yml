@@ -17,7 +17,7 @@ jobs:
     env:
       MODEL_URL: https://huggingface.co/empero-ai/Qwen3.8-4B-Distill-GGUF/resolve/main/Qwen3.8-4B-Q4_K_M.gguf?download=true
       MODEL_FILE: Qwen3.8-4B-Q4_K_M.gguf
-      CHUNK_INDEX: '0'
+      CHUNK_INDEX: '1'
       CHUNK_MIB: '450'
     steps:
       - name: Clean bridge leftovers
