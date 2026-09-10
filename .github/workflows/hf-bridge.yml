@@ -1,4 +1,4 @@
-name: hf-bridge-probe
+name: hf-bridge-release-probe
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
@@ -18,15 +18,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          head -c 1048576 /dev/urandom > probe.bin
-          sha256sum probe.bin | tee probe.sha256
-          ls -lh probe.bin
-      - name: Upload probe
-        uses: actions/upload-artifact@v4
-        with:
-          name: bridge-probe
-          path: |
-            probe.bin
-            probe.sha256
-          compression-level: 0
-          retention-days: 1
+          head -c 1048576 /dev/urandom > release-probe.bin
+          sha256sum release-probe.bin | tee release-probe.sha256
+      - name: Publish temporary release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete hf-bridge-temp --cleanup-tag -y || true
+          gh release create hf-bridge-temp \
+            release-probe.bin release-probe.sha256 \
+            --title 'Temporary HF bridge' \
+            --notes 'Temporary transfer probe; safe to delete.'
