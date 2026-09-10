@@ -1,0 +1,32 @@
+name: hf-bridge-probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/hf-bridge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Make 1 MiB probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          head -c 1048576 /dev/urandom > probe.bin
+          sha256sum probe.bin | tee probe.sha256
+          ls -lh probe.bin
+      - name: Upload probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-probe
+          path: |
+            probe.bin
+            probe.sha256
+          compression-level: 0
+          retention-days: 1
