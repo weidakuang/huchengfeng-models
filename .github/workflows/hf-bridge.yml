@@ -1,4 +1,4 @@
-name: hf-model-bridge
+name: hf-model-release-bridge
 
 on:
   push:
@@ -7,8 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
-  contents: read
+  contents: write
 
 jobs:
   bridge:
@@ -17,19 +16,8 @@ jobs:
     env:
       MODEL_URL: https://huggingface.co/empero-ai/Qwen3.8-4B-Distill-GGUF/resolve/main/Qwen3.8-4B-Q4_K_M.gguf?download=true
       MODEL_FILE: Qwen3.8-4B-Q4_K_M.gguf
+      RELEASE_TAG: qwen38-bridge
     steps:
-      - name: Clean old bridge artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.name | startswith("qwen38-q4km-part")) | .id' \
-            | while read -r id; do
-                [ -n "$id" ] && gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" >/dev/null
-              done
-
       - name: Restore model cache
         id: model-cache
         uses: actions/cache@v4
@@ -56,54 +44,20 @@ jobs:
           ls -lh "$MODEL_FILE".part*
           test "$(find . -maxdepth 1 -name "$MODEL_FILE.part*" | wc -l)" -eq 6
 
-      - name: Upload part 00
-        uses: actions/upload-artifact@v4
-        with:
-          name: qwen38-q4km-part00
-          path: |
-            Qwen3.8-4B-Q4_K_M.gguf.part00
-            model.sha256
-            model.size
-            parts.sha256
-          compression-level: 0
-          retention-days: 1
-
-      - name: Upload part 01
-        uses: actions/upload-artifact@v4
-        with:
-          name: qwen38-q4km-part01
-          path: Qwen3.8-4B-Q4_K_M.gguf.part01
-          compression-level: 0
-          retention-days: 1
-
-      - name: Upload part 02
-        uses: actions/upload-artifact@v4
-        with:
-          name: qwen38-q4km-part02
-          path: Qwen3.8-4B-Q4_K_M.gguf.part02
-          compression-level: 0
-          retention-days: 1
-
-      - name: Upload part 03
-        uses: actions/upload-artifact@v4
-        with:
-          name: qwen38-q4km-part03
-          path: Qwen3.8-4B-Q4_K_M.gguf.part03
-          compression-level: 0
-          retention-days: 1
-
-      - name: Upload part 04
-        uses: actions/upload-artifact@v4
-        with:
-          name: qwen38-q4km-part04
-          path: Qwen3.8-4B-Q4_K_M.gguf.part04
-          compression-level: 0
-          retention-days: 1
-
-      - name: Upload part 05
-        uses: actions/upload-artifact@v4
-        with:
-          name: qwen38-q4km-part05
-          path: Qwen3.8-4B-Q4_K_M.gguf.part05
-          compression-level: 0
-          retention-days: 1
+      - name: Publish temporary release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete "$RELEASE_TAG" --cleanup-tag --yes >/dev/null 2>&1 || true
+          gh release create "$RELEASE_TAG" \
+            "$MODEL_FILE".part00 \
+            "$MODEL_FILE".part01 \
+            "$MODEL_FILE".part02 \
+            "$MODEL_FILE".part03 \
+            "$MODEL_FILE".part04 \
+            "$MODEL_FILE".part05 \
+            model.sha256 model.size parts.sha256 \
+            --title "Temporary Qwen3.8 4B Q4_K_M bridge" \
+            --notes "Temporary transfer assets for assembling Qwen3.8-4B-Q4_K_M.gguf."
