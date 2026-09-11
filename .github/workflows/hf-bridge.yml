@@ -44,25 +44,66 @@ jobs:
           set -euo pipefail
           curl -L --fail --retry 8 --retry-delay 3 --retry-all-errors --connect-timeout 30 -o "$MODEL_FILE" "$MODEL_URL"
 
-      - name: Verify and cut chunk 02
+      - name: Verify and split model
         shell: bash
         run: |
           set -euo pipefail
           test -s "$MODEL_FILE"
           sha256sum "$MODEL_FILE" | tee model.sha256
           stat -c 'MODEL_SIZE=%s' "$MODEL_FILE" | tee model.size
-          dd if="$MODEL_FILE" of="$MODEL_FILE.part02" bs=1M skip=900 count=450 status=progress
-          sha256sum "$MODEL_FILE.part02" | tee part02.sha256
-          ls -lh "$MODEL_FILE.part02"
+          split -b 450M -d -a 2 "$MODEL_FILE" "$MODEL_FILE.part"
+          sha256sum "$MODEL_FILE".part* | tee parts.sha256
+          ls -lh "$MODEL_FILE".part*
+          test "$(find . -maxdepth 1 -name "$MODEL_FILE.part*" | wc -l)" -eq 6
+
+      - name: Upload part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-q4km-part00
+          path: |
+            Qwen3.8-4B-Q4_K_M.gguf.part00
+            model.sha256
+            model.size
+            parts.sha256
+          compression-level: 0
+          retention-days: 1
+
+      - name: Upload part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-q4km-part01
+          path: Qwen3.8-4B-Q4_K_M.gguf.part01
+          compression-level: 0
+          retention-days: 1
 
       - name: Upload part 02
         uses: actions/upload-artifact@v4
         with:
           name: qwen38-q4km-part02
-          path: |
-            Qwen3.8-4B-Q4_K_M.gguf.part02
-            model.sha256
-            model.size
-            part02.sha256
+          path: Qwen3.8-4B-Q4_K_M.gguf.part02
+          compression-level: 0
+          retention-days: 1
+
+      - name: Upload part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-q4km-part03
+          path: Qwen3.8-4B-Q4_K_M.gguf.part03
+          compression-level: 0
+          retention-days: 1
+
+      - name: Upload part 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-q4km-part04
+          path: Qwen3.8-4B-Q4_K_M.gguf.part04
+          compression-level: 0
+          retention-days: 1
+
+      - name: Upload part 05
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen38-q4km-part05
+          path: Qwen3.8-4B-Q4_K_M.gguf.part05
           compression-level: 0
           retention-days: 1
